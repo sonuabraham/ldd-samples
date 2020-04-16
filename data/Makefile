@@ -1,5 +1,5 @@
 
-obj-m := lab1_list.o lab2_taints.o lab3_sparse_corrected.o lab3_sparse_errors.o lab4_kdataalign.o lab5_kdatasize.o 
+obj-m := lab1_data_kdatasize.o lab2_data_container_of.o lab3_data_list.o lab4_data_hashtable.o lab5_data_taints.o
 
 SRC := $(shell pwd)
 

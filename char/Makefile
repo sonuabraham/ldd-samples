@@ -1,6 +1,6 @@
 #Makefile for char modules
 
-obj-m += lab1stage1.o lab2stage2.o
+obj-m += lab1_char_init.o lab2_char_read_write.o lab3_char_ioctl.o lab4_char_seek.o lab5_char_poll.o lab6_char_fasync.o
 
 SRC := $(shell pwd)
 
