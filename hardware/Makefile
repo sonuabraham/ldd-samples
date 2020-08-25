@@ -1,5 +1,5 @@
 
-obj-m := lab2_region.o lab2_resource.o lab3_map.o lab4_full_mouse_driver.o lab4_serial.o  
+obj-m := lab1_port.o  lab2_memory.o short.o
 
 SRC := $(shell pwd)
 

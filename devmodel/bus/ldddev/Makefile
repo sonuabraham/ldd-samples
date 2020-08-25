@@ -1,15 +1,19 @@
-obj-m += lab1_interrupt.o lab2_interrupt.o lab3_tasklet.o lab3_workqueue.o 
+
+obj-m	:= ldddev.o
+
 
 SRC := $(shell pwd)
 
+ccflags-y += -I$(BASE_MODULE_PATH)
+
+
 all:
-	$(MAKE) -C $(KERNEL_SRC) M=$(SRC)
+	$(MAKE) -C $(KERNEL_SRC)  M=$(SRC) 
 
 modules_install:
 	$(MAKE) -C $(KERNEL_SRC) M=$(SRC) modules_install
 
 clean:
-	rm -f *.o *~ core .depend .*.cmd *.ko *.mod.c	
+	rm -f *.o *~ core .depend .*.cmd *.ko *.mod.c
 	rm -f Module.markers Module.symvers modules.order
 	rm -rf .tmp_versions Modules.symvers
-

@@ -8,103 +8,50 @@
  *
  */
 
-/*
- * Sharing All Interrupts  (Kernel Module)
- *
- * Extend the previous solution to construct a character driver that
- * shares every possible interrupt with already installed handlers.
- *
- * The highest interrupt number you have to consider will depend on
- * your kernel and platform; look at /proc/interrupts to ascertan what
- * is necessary.  You can also use the parameter nr_irqs but that is
- * likely to be much larger than the highest number you have active.
- *
- * Take particular care when you call free_irq() as it is very easy to
- * freeze your system if you are not careful.
- *
- * The character driver can be very simple; for instance if no open()
- * and release() methods are specified, success is the default.
- *
- * A read() on the device should return a brief report on the total
- * number of interrupts handled for each IRQ.
- *
- * To do this you'll also have to write a short application to
- * retrieve and print out the data.  (Don't forget to create the
- * device node before you run the application.)
- *
- */
- 
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/interrupt.h>
 
-/* either of these (but not both) will work */
-
-//#include "lab_char.h"
-#include "lab_miscdev.h"
-
-//#define MAXIRQS 256
-#define MAXIRQS nr_irqs
-
-#define NCOPY (MAXIRQS * sizeof(int))
-
-static int *interrupts;
+#define KBD_DATA_REG        0x60    /* I/O port for keyboard data */
+#define KBD_SCANCODE_MASK   0x7f
+#define KBD_STATUS_MASK     0x80
+#define SHARED_IRQ 1  /* IRQ number for keyboard (i8042) */
+static int irq = SHARED_IRQ, my_dev_id, irq_counter = 0;
+module_param(irq, int, S_IRUGO);
 
 static irqreturn_t my_interrupt(int irq, void *dev_id)
 {
-	interrupts[irq]++;
-	return IRQ_NONE;	/* we return IRQ_NONE because we are just observing */
+	char scancode;
+	irq_counter++;
+	pr_info("In the ISR: counter = %d\n", irq_counter);
+    scancode = inb(KBD_DATA_REG);
+    pr_info("Scan Code %x %s\n",
+            scancode & KBD_SCANCODE_MASK,
+            scancode & KBD_STATUS_MASK ? "Released" : "Pressed");
+	return IRQ_NONE;	
 }
-
-static void freeup_irqs(void)
-{
-	int irq;
-	for (irq = 0; irq < MAXIRQS; irq++) {
-		if (interrupts[irq] >= 0) {	/* if greater than 0, was able to share */
-			synchronize_irq(irq);
-			pr_info("Freeing IRQ= %4d, which had %10d events\n",
-				irq, interrupts[irq]);
-			free_irq(irq, interrupts);
-		}
-	}
-}
-
-static void get_irqs(void)
-{
-	int irq;
-	interrupts = (int *)ramdisk;
-
-	for (irq = 0; irq < MAXIRQS; irq++) {
-		interrupts[irq] = -1;	/* set to -1 as a flag */
-		if (!request_irq
-		    (irq, my_interrupt, IRQF_SHARED, "my_int", interrupts)) {
-			interrupts[irq] = 0;
-			pr_info("Succeded in registering IRQ=%d\n", irq);
-		}
-	}
-}
-
-static const struct file_operations mycdrv_fops = {
-	.owner = THIS_MODULE,
-	.read = mycdrv_generic_read,
-};
 
 static int __init my_init(void)
 {
-	int rc = my_generic_init();
-	if (!rc)
-		get_irqs();
-	return rc;
+	if (request_irq
+	    (irq, my_interrupt, IRQF_SHARED, "my_interrupt", &my_dev_id)) {
+		pr_info("Failed to reserve irq %d\n", irq);
+		return -1;
+	}
+	pr_info("Successfully loading ISR handler\n");
+	return 0;
 }
 
 static void __exit my_exit(void)
 {
-	freeup_irqs();
-	my_generic_exit();
+	synchronize_irq(irq);
+	free_irq(irq, &my_dev_id);
+	pr_info("Successfully unloading,  irq_counter = %d\n", irq_counter);
 }
 
 module_init(my_init);
 module_exit(my_exit);
 
 MODULE_AUTHOR("Sonu Abraham");
-MODULE_DESCRIPTION("LDD:2.0 chap10/lab2_interrupt.c");
+MODULE_DESCRIPTION("LDD: Interrupt handling with data in ISR");
 MODULE_LICENSE("GPL v2");

@@ -26,7 +26,7 @@ MODULE_PARM_DESC(param_array,"Module integer array parameter");
 
 static int __init moduleparams_init(void)
 {
-	pr_info("Loading moduleparams module\n");
+	pr_info("Loading params module\n");
 	pr_info(" param_int = %d\n", param_int);
 	pr_info(" param_str = %s\n", param_str);
 	pr_info(" param_array elements: %d\t%d\t%d\t%d\n", param_array[0],param_array[1],param_array[2],param_array[3]);
@@ -42,5 +42,5 @@ module_init(moduleparams_init);
 module_exit(moduleparams_exit);
 
 MODULE_AUTHOR("Sonu Abraham");
-MODULE_DESCRIPTION("LDD: Module parameters");
+MODULE_DESCRIPTION("Module to demonstate parameters");
 MODULE_LICENSE("GPL v2");

@@ -8,25 +8,11 @@
  *
  */
 
-/*
- * Shared Interrupts
- *
- * Write a module that shares its IRQ with your network card.  You can
- * generate some network interrupts either by browsing or pinging.
- * (If you have trouble with the network driver, try using the mouse
- * interrupt.)
- *
- * Check /proc/interrupts while it is loaded.
- *
- * Have the module keep track of the number of times the interrupt
- * handler gets called.
- */
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 
-#define SHARED_IRQ 17
+#define SHARED_IRQ 1   /* IRQ number for keyboard (i8042) */
 static int irq = SHARED_IRQ, my_dev_id, irq_counter = 0;
 module_param(irq, int, S_IRUGO);
 
@@ -34,7 +20,7 @@ static irqreturn_t my_interrupt(int irq, void *dev_id)
 {
 	irq_counter++;
 	pr_info("In the ISR: counter = %d\n", irq_counter);
-	return IRQ_NONE;	/* we return IRQ_NONE because we are just observing */
+	return IRQ_NONE;	
 }
 
 static int __init my_init(void)
@@ -59,5 +45,5 @@ module_init(my_init);
 module_exit(my_exit);
 
 MODULE_AUTHOR("Sonu Abraham");
-MODULE_DESCRIPTION("LDD:2.0 chap10/lab1_interrupt.c");
+MODULE_DESCRIPTION("LDD: Interrupt Handling");
 MODULE_LICENSE("GPL v2");

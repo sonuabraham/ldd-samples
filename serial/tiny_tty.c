@@ -1,15 +1,15 @@
 /*
- * Copyright (C) 2013 Sonu Abraham
- * Copyright (C) 2013 Tech Training Engineers
- *
- * The source code in this file can be freely used, adapted,
- * and redistributed in source or binary form, so long as an
- * acknowledgment appears in derived source files. 
- *
- */
-
-/*
  * Tiny TTY driver
+ *
+ * Copyright (C) 2002-2004 Greg Kroah-Hartman (greg@kroah.com)
+ *
+ *	This program is free software; you can redistribute it and/or modify
+ *	it under the terms of the GNU General Public License as published by
+ *	the Free Software Foundation, version 2 of the License.
+ *
+ * This driver shows how to create a minimal tty driver.  It does not rely on
+ * any backing hardware, but creates a timer that emulates data being received
+ * from some kind of hardware.
  */
 
 #include <linux/kernel.h>
@@ -23,6 +23,7 @@
 #include <linux/tty_flip.h>
 #include <linux/serial.h>
 #include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/seq_file.h>
 #include <asm/uaccess.h>
 
@@ -39,14 +40,13 @@ MODULE_LICENSE("GPL");
 #define DELAY_TIME		HZ * 2	/* 2 seconds per character */
 #define TINY_DATA_CHARACTER	't'
 
-#define TINY_TTY_MAJOR		240	/* experimental range */
+#define TINY_TTY_MAJOR		0	/* experimental range */
 #define TINY_TTY_MINORS		4	/* only have 4 devices */
 
 struct tiny_serial {
-	struct tty_struct	*tty;		/* pointer to the tty for this device */
-	int			open_count;	/* number of times this port has been opened */
-	struct semaphore	sem;		/* locks this structure */
-	struct timer_list	*timer;
+	struct tty_port	port;		/* pointer to the tty for this device */
+	struct mutex	port_write_mutex;
+	struct timer_list	timer;
 
 	/* for tiocmget and tiocmset functions */
 	int			msr;		/* MSR shadow */
@@ -61,11 +61,10 @@ struct tiny_serial {
 static struct tiny_serial *tiny_table[TINY_TTY_MINORS];	/* initially all NULL */
 
 
-static void tiny_timer(unsigned long timer_data)
+static void tiny_timer(struct timer_list* arg)
 {
-	struct tiny_serial *tiny = (struct tiny_serial *)timer_data;
-	struct tty_struct *tty;
-	struct uart_state *state;
+	struct tiny_serial *tiny = from_timer(tiny, arg, timer);
+	struct tty_port *port;
 	int i;
 	char data[1] = {TINY_DATA_CHARACTER};
 	int data_size = 1;
@@ -73,28 +72,58 @@ static void tiny_timer(unsigned long timer_data)
 	if (!tiny)
 		return;
 
-	tty = tiny->tty;
-        state = tty->driver_data;
+	port = &tiny->port;
 
 	/* send the data to the tty layer for users to read.  This doesn't
 	 * actually push the data through unless tty->low_latency is set */
+	/* FIXME: when data_size increase,
+	 * we need to call tty_flip_buffer_push during tty_insert_flip_char */
+	tty_buffer_request_room(port, data_size);
 	for (i = 0; i < data_size; ++i) {
-		if (!tty_buffer_request_room(&state->port, 1))
-			tty_flip_buffer_push(&state->port);
-		tty_insert_flip_char(&state->port, data[i], TTY_NORMAL);
+		tty_insert_flip_char(port, data[i], TTY_NORMAL);
 	}
-	tty_flip_buffer_push(&state->port);
+	tty_flip_buffer_push(port);
 
 	/* resubmit the timer again */
-	tiny->timer->expires = jiffies + DELAY_TIME;
-	add_timer(tiny->timer);
+	tiny->timer.expires = jiffies + DELAY_TIME;
+	add_timer(&tiny->timer);
+}
+
+/*
+ * this is the first time this port is opened
+ * do any hardware initialization needed here
+ */
+static int tiny_activate(struct tty_port *tport, struct tty_struct *tty)
+{
+	struct tiny_serial *tiny;
+
+	tiny = container_of(tport, struct tiny_serial, port);
+
+	timer_setup(&tiny->timer, tiny_timer, 0);
+	tiny->timer.expires = jiffies + DELAY_TIME;
+	add_timer(&tiny->timer);
+	return 0;
+}
+
+/*
+ * The port is being closed by the last user.
+ * Do any hardware specific stuff here *
+ */
+static void tiny_shutdown(struct tty_port *tport){
+	struct tiny_serial *tiny;
+
+	tiny = container_of(tport, struct tiny_serial, port);
+
+	/* shut down our timer */
+	del_timer(&tiny->timer);
 }
 
 static int tiny_open(struct tty_struct *tty, struct file *file)
 {
 	struct tiny_serial *tiny;
-	struct timer_list *timer;
 	int index;
+	struct tty_port *port;
+	int status;
 
 	/* initialize the pointer in case something fails */
 	tty->driver_data = NULL;
@@ -102,76 +131,29 @@ static int tiny_open(struct tty_struct *tty, struct file *file)
 	/* get the serial object associated with this tty pointer */
 	index = tty->index;
 	tiny = tiny_table[index];
-	if (tiny == NULL) {
-		/* first time accessing this device, let's create it */
-		tiny = kmalloc(sizeof(*tiny), GFP_KERNEL);
-		if (!tiny)
-			return -ENOMEM;
 
-		sema_init(&tiny->sem, 1);
-		tiny->open_count = 0;
-		tiny->timer = NULL;
+	port = &tiny->port;
 
-		tiny_table[index] = tiny;
+	status = tty_port_open(port, tty, file);
+
+	if(!status) {
+		/* save our structure within the tty structure */
+		tty->driver_data = tiny;
 	}
 
-	down(&tiny->sem);
-
-	/* save our structure within the tty structure */
-	tty->driver_data = tiny;
-	tiny->tty = tty;
-
-	++tiny->open_count;
-	if (tiny->open_count == 1) {
-		/* this is the first time this port is opened */
-		/* do any hardware initialization needed here */
-
-		/* create our timer and submit it */
-		if (!tiny->timer) {
-			timer = kmalloc(sizeof(*timer), GFP_KERNEL);
-			if (!timer) {
-				up(&tiny->sem);
-				return -ENOMEM;
-			}
-			tiny->timer = timer;
-		}
-		tiny->timer->data = (unsigned long )tiny;
-		tiny->timer->expires = jiffies + DELAY_TIME;
-		tiny->timer->function = tiny_timer;
-		add_timer(tiny->timer);
-	}
-
-	up(&tiny->sem);
-	return 0;
+	return status;
 }
 
-static void do_close(struct tiny_serial *tiny)
-{
-	down(&tiny->sem);
-
-	if (!tiny->open_count) {
-		/* port was never opened */
-		goto exit;
-	}
-
-	--tiny->open_count;
-	if (tiny->open_count <= 0) {
-		/* The port is being closed by the last user. */
-		/* Do any hardware specific stuff here */
-
-		/* shut down our timer */
-		del_timer(tiny->timer);
-	}
-exit:
-	up(&tiny->sem);
-}
 
 static void tiny_close(struct tty_struct *tty, struct file *file)
 {
 	struct tiny_serial *tiny = tty->driver_data;
+	struct tty_port *port;
+
+	port = &tiny->port;
 
 	if (tiny)
-		do_close(tiny);
+		tty_port_close(port, tty, file);
 }	
 
 static int tiny_write(struct tty_struct *tty, 
@@ -179,16 +161,24 @@ static int tiny_write(struct tty_struct *tty,
 {
 	struct tiny_serial *tiny = tty->driver_data;
 	int i;
-	int retval = -EINVAL;
+	int retval;
+	struct tty_port *port;
+	unsigned long flags;
 
 	if (!tiny)
 		return -ENODEV;
 
-	down(&tiny->sem);
+	mutex_lock(&tiny->port_write_mutex);
 
-	if (!tiny->open_count)
+	port = &tiny->port;
+	spin_lock_irqsave(&port->lock, flags);
+	if (!port->count) {
+		spin_unlock_irqrestore(&port->lock, flags);
 		/* port was not opened */
+		retval = -EINVAL;
 		goto exit;
+	}
+	spin_unlock_irqrestore(&port->lock, flags);
 
 	/* fake sending the data out a hardware port by
 	 * writing it to the kernel debug log.
@@ -197,9 +187,10 @@ static int tiny_write(struct tty_struct *tty,
 	for (i = 0; i < count; ++i)
 		printk("%02x ", buffer[i]);
 	printk("\n");
+	retval = count;
 		
 exit:
-	up(&tiny->sem);
+	mutex_unlock(&tiny->port_write_mutex);
 	return retval;
 }
 
@@ -207,22 +198,28 @@ static int tiny_write_room(struct tty_struct *tty)
 {
 	struct tiny_serial *tiny = tty->driver_data;
 	int room = -EINVAL;
+	struct tty_port *port;
+	unsigned long flags;
 
 	if (!tiny)
 		return -ENODEV;
 
-	down(&tiny->sem);
+	mutex_lock(&tiny->port_write_mutex);
 	
-	if (!tiny->open_count) {
+	port = &tiny->port;
+	spin_lock_irqsave(&port->lock, flags);
+	if (!port->count) {
+		spin_unlock_irqrestore(&port->lock, flags);
 		/* port was not opened */
 		goto exit;
 	}
+	spin_unlock_irqrestore(&port->lock, flags);
 
 	/* calculate how much room is left in the device */
 	room = 255;
 
 exit:
-	up(&tiny->sem);
+	mutex_unlock(&tiny->port_write_mutex);
 	return room;
 }
 
@@ -232,12 +229,12 @@ static void tiny_set_termios(struct tty_struct *tty, struct ktermios *old_termio
 {
 	unsigned int cflag;
 
-	cflag = tty->termios->c_cflag;
+	cflag = tty->termios.c_cflag;
 
 	/* check that they really want us to change something */
 	if (old_termios) {
 		if ((cflag == old_termios->c_cflag) &&
-		    (RELEVANT_IFLAG(tty->termios->c_iflag) == 
+		    (RELEVANT_IFLAG(tty->termios.c_iflag) ==
 		     RELEVANT_IFLAG(old_termios->c_iflag))) {
 			printk(KERN_DEBUG " - nothing to change...\n");
 			return;
@@ -336,8 +333,8 @@ static int tiny_tiocmget(struct tty_struct *tty)
 	return result;
 }
 
-static int tiny_tiocmset(struct tty_struct *tty, unsigned int set,
-			 unsigned int clear)
+static int tiny_tiocmset(struct tty_struct *tty,
+                         unsigned int set, unsigned int clear)
 {
 	struct tiny_serial *tiny = tty->driver_data;
 	unsigned int mcr = tiny->mcr;
@@ -357,7 +354,7 @@ static int tiny_tiocmset(struct tty_struct *tty, unsigned int set,
 	return 0;
 }
 
-static int tiny_proc_show(struct seq_file *m, void *v)
+static int  tiny_tty_proc_show(struct seq_file *m, void *v)
 {
 	struct tiny_serial *tiny;
 	int i;
@@ -367,16 +364,14 @@ static int tiny_proc_show(struct seq_file *m, void *v)
 		tiny = tiny_table[i];
 		if (tiny == NULL)
 			continue;
-
 		seq_printf(m, "%d\n", i);
 	}
-
 	return 0;
 }
 
 #define tiny_ioctl tiny_ioctl_tiocgserial
-static int tiny_ioctl(struct tty_struct *tty, unsigned int cmd,
-		      unsigned long arg)
+static int tiny_ioctl(struct tty_struct *tty,
+                      unsigned int cmd, unsigned long arg)
 {
 	struct tiny_serial *tiny = tty->driver_data;
 
@@ -410,8 +405,8 @@ static int tiny_ioctl(struct tty_struct *tty, unsigned int cmd,
 #undef tiny_ioctl
 
 #define tiny_ioctl tiny_ioctl_tiocmiwait
-static int tiny_ioctl(struct tty_struct *tty, unsigned int cmd,
-		      unsigned long arg)
+static int tiny_ioctl(struct tty_struct *tty,
+                      unsigned int cmd, unsigned long arg)
 {
 	struct tiny_serial *tiny = tty->driver_data;
 
@@ -450,8 +445,8 @@ static int tiny_ioctl(struct tty_struct *tty, unsigned int cmd,
 #undef tiny_ioctl
 
 #define tiny_ioctl tiny_ioctl_tiocgicount
-static int tiny_ioctl(struct tty_struct *tty, unsigned int cmd,
-		      unsigned long arg)
+static int tiny_ioctl(struct tty_struct *tty,
+                      unsigned int cmd, unsigned long arg)
 {
 	struct tiny_serial *tiny = tty->driver_data;
 
@@ -480,8 +475,8 @@ static int tiny_ioctl(struct tty_struct *tty, unsigned int cmd,
 #undef tiny_ioctl
 
 /* the real tiny_ioctl function.  The above is done to get the small functions in the book */
-static int tiny_ioctl(struct tty_struct *tty, unsigned int cmd,
-		      unsigned long arg)
+static int tiny_ioctl(struct tty_struct *tty,
+                      unsigned int cmd, unsigned long arg)
 {
 	switch (cmd) {
 	case TIOCGSERIAL:
@@ -495,30 +490,21 @@ static int tiny_ioctl(struct tty_struct *tty, unsigned int cmd,
 	return -ENOIOCTLCMD;
 }
 
-static int tiny_proc_open(struct inode *inode, struct file *file)
-{
-        return single_open(file, tiny_proc_show, NULL);
-}
-
-
-static const struct file_operations serial_proc_fops = {
-        .owner          = THIS_MODULE,
-        .open           = tiny_proc_open,
-	.read           = seq_read,
-        .llseek         = seq_lseek,
-        .release        = single_release,
-};
-
 static struct tty_operations serial_ops = {
 	.open = tiny_open,
 	.close = tiny_close,
 	.write = tiny_write,
 	.write_room = tiny_write_room,
 	.set_termios = tiny_set_termios,
-	.proc_fops	= &serial_proc_fops,
 	.tiocmget = tiny_tiocmget,
 	.tiocmset = tiny_tiocmset,
 	.ioctl = tiny_ioctl,
+	.proc_show       = tiny_tty_proc_show,
+};
+
+static const struct tty_port_operations tiny_port_ops = {
+	.activate		= tiny_activate,
+	.shutdown		= tiny_shutdown,
 };
 
 static struct tty_driver *tiny_tty_driver;
@@ -527,6 +513,7 @@ static int __init tiny_init(void)
 {
 	int retval;
 	int i;
+	struct tiny_serial *tiny;
 
 	/* allocate the tty driver */
 	tiny_tty_driver = alloc_tty_driver(TINY_TTY_MINORS);
@@ -548,15 +535,46 @@ static int __init tiny_init(void)
 	/* register the tty driver */
 	retval = tty_register_driver(tiny_tty_driver);
 	if (retval) {
-		printk(KERN_ERR "failed to register tiny tty driver");
-		put_tty_driver(tiny_tty_driver);
-		return retval;
+		printk(KERN_ERR "failed to register tiny tty driver, retval=%d", retval);
+		goto err_tty_register_driver;
+	}
+	printk(KERN_ERR "register success. major=%d", tiny_tty_driver->major);
+
+	for (i = 0; i < TINY_TTY_MINORS; ++i) {
+		/* let's create it */
+		tiny = kmalloc(sizeof(*tiny), GFP_KERNEL);
+		if (!tiny) {
+			retval = -ENOMEM;
+			printk(KERN_ERR "failed to alloc tiny_serial");
+			goto err_kmalloc_tiny;
+		}
+
+		mutex_init(&tiny->port_write_mutex);
+
+		tiny_table[i] = tiny;
+		tty_port_init(&tiny->port);
+		tiny->port.ops = &tiny_port_ops;
 	}
 
-	for (i = 0; i < TINY_TTY_MINORS; ++i)
-		tty_register_device(tiny_tty_driver, i, NULL);
+	for (i = 0; i < TINY_TTY_MINORS; ++i) {
+		tty_port_register_device(&tiny_table[i]->port, tiny_tty_driver, i, NULL);
+	}
 
-	printk(KERN_INFO DRIVER_DESC " " DRIVER_VERSION);
+	printk(KERN_INFO DRIVER_DESC " " DRIVER_VERSION "\n");
+	return retval;
+
+err_kmalloc_tiny:
+	for (i = 0; i < TINY_TTY_MINORS; ++i) {
+		tiny = tiny_table[i];
+		if (tiny) {
+			tty_port_destroy(&tiny->port);
+			kfree(tiny);
+		}
+	}
+
+err_tty_register_driver:
+	put_tty_driver(tiny_tty_driver);
+
 	return retval;
 }
 
@@ -568,28 +586,22 @@ static void __exit tiny_exit(void)
 	for (i = 0; i < TINY_TTY_MINORS; ++i)
 		tty_unregister_device(tiny_tty_driver, i);
 	tty_unregister_driver(tiny_tty_driver);
+	put_tty_driver(tiny_tty_driver);
 
 	/* shut down all of the timers and free the memory */
 	for (i = 0; i < TINY_TTY_MINORS; ++i) {
 		tiny = tiny_table[i];
-		if (tiny) {
-			/* close the port */
-			while (tiny->open_count)
-				do_close(tiny);
+		/* close the port */
+		/* FIXME: how to close the port ???
+		 * using tty_hangup ??? */
+		if(tiny->port.count)
+			tiny_shutdown(&tiny->port);
 
-			/* shut down our timer and free the memory */
-			del_timer(tiny->timer);
-			kfree(tiny->timer);
-			kfree(tiny);
-			tiny_table[i] = NULL;
-		}
+		tty_port_destroy(&tiny->port);
+		kfree(tiny);
+		tiny_table[i] = NULL;
 	}
 }
 
 module_init(tiny_init);
 module_exit(tiny_exit);
-
-
-MODULE_AUTHOR("Sonu Abraham");
-MODULE_DESCRIPTION("LDD:2.0 chap18/tty/tiny_tty.c");
-MODULE_LICENSE("GPL v2");

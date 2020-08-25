@@ -1,15 +1,15 @@
 /*
- * Copyright (C) 2013 Sonu Abraham
- * Copyright (C) 2013 Tech Training Engineers
- *
- * The source code in this file can be freely used, adapted,
- * and redistributed in source or binary form, so long as an
- * acknowledgment appears in derived source files. 
- *
- */
-
-/*
  * Tiny Serial driver
+ *
+ * Copyright (C) 2002-2004 Greg Kroah-Hartman (greg@kroah.com)
+ *
+ *	This program is free software; you can redistribute it and/or modify
+ *	it under the terms of the GNU General Public License as published by
+ *	the Free Software Foundation, version 2 of the License.
+ *
+ * This driver shows how to create a minimal serial driver.  It does not rely on
+ * any backing hardware, but creates a timer that emulates data being received
+ * from some kind of hardware.
  */
 
 #include <linux/kernel.h>
@@ -22,6 +22,15 @@
 #include <linux/serial_core.h>
 #include <linux/module.h>
 
+
+#define DRIVER_AUTHOR "Greg Kroah-Hartman <greg@kroah.com>"
+#define DRIVER_DESC "Tiny serial driver"
+
+/* Module information */
+MODULE_AUTHOR( DRIVER_AUTHOR );
+MODULE_DESCRIPTION( DRIVER_DESC );
+MODULE_LICENSE("GPL");
+
 #define DELAY_TIME		HZ * 2	/* 2 seconds per character */
 #define TINY_DATA_CHARACTER	't'
 
@@ -33,16 +42,14 @@
 
 #define MY_NAME			TINY_SERIAL_NAME
 
-#define from_timer(var, callback_timer, timer_fieldname) \
-    container_of(callback_timer, typeof(*var), timer_fieldname) 
-
-struct timer_data {
-    struct timer_list timer;
-    unsigned long data;
+struct port_data {
+	struct timer_list timer;
+	struct uart_port* port;
 };
 
-static struct timer_data *tmd;
-
+struct port_data tiny_port_data = {
+	.port = NULL,
+};
 
 static void tiny_stop_tx(struct uart_port *port)
 {
@@ -92,34 +99,28 @@ static void tiny_start_tx(struct uart_port *port)
 {
 }
 
-static void tiny_timer(struct timer_list *t)
+static void tiny_timer(struct timer_list* arg)
 {
 	struct uart_port *port;
-	struct tty_struct *tty;
-	struct tty_port *tty_port;
-	
- 	struct timer_data *tmd = from_timer(tmd, t, timer);
-    	unsigned long data = tmd -> data;
+	struct tty_port *tport;
 
-	port = (struct uart_port *)data;
+
+	port = tiny_port_data.port;
 	if (!port)
 		return;
 	if (!port->state)
 		return;
-	tty = port->state->port.tty;
-	if (!tty)
-		return;
-	tty_port = &port->state->port;	
+	tport = &port->state->port;
 
 	/* add one character to the tty port */
 	/* this doesn't actually push the data through unless tty->low_latency is set */
-	tty_insert_flip_char(tty_port, TINY_DATA_CHARACTER, 0);
+	tty_insert_flip_char(tport, TINY_DATA_CHARACTER, 0);
 
-	tty_flip_buffer_push(tty_port);
+	tty_flip_buffer_push(tport);
 
 	/* resubmit the timer again */
-	tmd->timer.expires = jiffies + DELAY_TIME;
-	add_timer(&tmd->timer);
+	tiny_port_data.timer.expires = jiffies + DELAY_TIME;
+	add_timer(&tiny_port_data.timer);
 
 	/* see if we have any data to transmit */
 	tiny_tx_chars(port);
@@ -197,14 +198,12 @@ static int tiny_startup(struct uart_port *port)
 	/* this is the first time this port is opened */
 	/* do any hardware initialization needed here */
 
-	tmd = kmalloc(sizeof(*tmd), GFP_KERNEL);
-	if (!tmd)
-	 return -ENOMEM;
-	
-	tmd->data = (unsigned long) port;
-	timer_setup(&tmd->timer, tiny_timer, 0);
- 	tmd->timer.expires = jiffies + DELAY_TIME;
-	add_timer(&tmd->timer);
+	/* create our timer and submit it */
+	tiny_port_data.port = port;
+	timer_setup(&tiny_port_data.timer, tiny_timer, 0);
+
+	tiny_port_data.timer.expires = jiffies + DELAY_TIME;
+	add_timer(&tiny_port_data.timer);
 	return 0;
 }
 
@@ -214,7 +213,7 @@ static void tiny_shutdown(struct uart_port *port)
 	/* Do any hardware specific stuff here */
 
 	/* shut down our timer */
-	del_timer(&tmd->timer);
+	del_timer(&tiny_port_data.timer);
 }
 
 static const char *tiny_type(struct uart_port *port)
@@ -262,6 +261,7 @@ static struct uart_ops tiny_ops = {
 
 static struct uart_port tiny_port = {
 	.ops		= &tiny_ops,
+	.type           = PORT_16550A,
 };
 
 static struct uart_driver tiny_reg = {
@@ -291,8 +291,3 @@ static int __init tiny_init(void)
 }
 
 module_init(tiny_init);
-
-
-MODULE_AUTHOR("Sonu Abraham");
-MODULE_DESCRIPTION("LDD:2.0 chap18/tty/tiny_serial.c");
-MODULE_LICENSE("GPL v2");

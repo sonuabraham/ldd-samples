@@ -1,6 +1,4 @@
- obj-m := lab1_copytofrom.o lab1_putget.o \
-  	   lab3_mmap.o lab5_dma.o \
-	  lab5_dma_PCI_API.o  
+ obj-m :=  lab3_mmap.o lab5_dma.o lab6_aio.o \
 
 
 SRC := $(shell pwd)

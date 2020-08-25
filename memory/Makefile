@@ -1,5 +1,5 @@
 
-obj-m := lab1_cache.o lab2_maxmem.o lab2_maxvmalloc.o  
+obj-m := memory_lab1_memalloc.o memory_lab2_cache.o 
 
 SRC := $(shell pwd)
 

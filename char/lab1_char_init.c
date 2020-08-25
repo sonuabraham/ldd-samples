@@ -88,6 +88,6 @@ module_init(chardrv_init);
 module_exit(chardrv_exit);
 
 MODULE_AUTHOR("Sonu Abraham");
-MODULE_DESCRIPTION("LDDChar: Character driver initialization");
+MODULE_DESCRIPTION("Basic character driver initialization");
 MODULE_LICENSE("GPL v2");
 

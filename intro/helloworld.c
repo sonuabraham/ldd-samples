@@ -27,6 +27,6 @@ module_init(helloworld_init);
 module_exit(helloworld_exit);
 
 MODULE_AUTHOR("Sonu Abraham");
-MODULE_DESCRIPTION("LDD: Simple Helloworld Module");
+MODULE_DESCRIPTION("Simple Helloworld Module");
 MODULE_LICENSE("GPL v2");
 

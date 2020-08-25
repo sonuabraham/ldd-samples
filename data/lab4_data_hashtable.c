@@ -1,5 +1,11 @@
 /*
- * Kernel hash tables
+ * Copyright (C) 2020-2021 Sonu Abraham
+ * Copyright (C) 2020-2021 Embedded Tech Labs Pty Ltd
+ *
+ * The source code in this file can be freely used, adapted,
+ * and redistributed in source or binary form, so long as an
+ * acknowledgment appears in derived source files. 
+ *
  */
 
 #define pr_fmt(fmt) "%s:%s: " fmt, KBUILD_MODNAME, __func__
@@ -91,7 +97,6 @@ static void __exit hashtable_exit(void)
 module_init(hashtable_init);
 module_exit(hashtable_exit);
 
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Rodolfo Giometti");
-MODULE_DESCRIPTION("Kernel hash tables");
-MODULE_VERSION("0.1");
+MODULE_AUTHOR("Sonu Abraham");
+MODULE_DESCRIPTION("LDD Module to illustrate hast table usage in device drivers");
+MODULE_LICENSE("GPL v2");

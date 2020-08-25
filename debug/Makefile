@@ -1,6 +1,14 @@
-
-obj-m +=  lab3_chrdrv.o lab3_probe_module.o lab4_debugfs.o lab5_proc.o lab8_seqfile.o lab10_procfs.o lab11_seq.o b12_faulty.o lab13_busy.o 
-
+# Comment/uncomment the following line to disable/enable debugging
+DEBUG = y
+# Add your debugging flag (or not) to CFLAGS
+ifeq ($(DEBUG),y)
+ CFLAGS_debug_lab1_print.o = -O -g -DLDD_DEBUG
+else
+ CFLAGS_debug_lab1_print.o = -O2
+endif
+obj-m +=  debug_lab1_print.o debug_lab2_procfs.o debug_lab3_seqfile.o
+#obj-m +=  debug_lab1_print.o debug_lab2_procfs.o debug_lab3_seqfile.o debug_lab4_debugfs.o debug_lab5_kprobes.o debug_lab6_jprobes.o 
+			
 SRC := $(shell pwd)
 
 all:

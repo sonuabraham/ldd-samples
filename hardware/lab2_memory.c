@@ -1,0 +1,149 @@
+/*
+ * Copyright (C) 2020-2021 Sonu Abraham
+ * Copyright (C) 2020-2021 Embedded Tech Labs Pty Ltd
+ *
+ * The source code in this file can be freely used, adapted,
+ * and redistributed in source or binary form, so long as an
+ * acknowledgment appears in derived source files. 
+ *
+ */
+#include <linux/module.h>
+#include <linux/version.h>
+#include <linux/kernel.h>
+#include <linux/types.h>
+#include <linux/kdev_t.h>
+#include <linux/fs.h>
+#include <linux/device.h>
+#include <linux/cdev.h>
+#include <linux/uaccess.h>
+#include <asm/io.h>
+
+#define IOMEM_BASE 0x000A0000
+#define IOMEM_SIZE 0x00020000
+
+static void __iomem *vram;
+static dev_t first;
+static struct cdev c_dev;
+static struct class *cl;
+
+static int iomem_open(struct inode *i, struct file *f)
+{
+    return 0;
+}
+static int iomem_close(struct inode *i, struct file *f)
+{
+    return 0;
+}
+static ssize_t iomem_read(struct file *f, char __user *buf, size_t len, loff_t *off)
+{
+    int i;
+    u8 byte;
+
+    if (*off >= IOMEM_SIZE)
+    {
+        return 0;
+    }
+    if (*off + len > IOMEM_SIZE)
+    {
+        len = IOMEM_SIZE - *off;
+    }
+    for (i = 0; i < len; i++)
+    {
+        byte = ioread8((u8 *)vram + *off + i);
+        if (copy_to_user(buf + i, &byte, 1))
+        {
+            return -EFAULT;
+        }
+    }
+    *off += len;
+
+    return len;
+}
+static ssize_t iomem_write(
+        struct file *f, const char __user *buf, size_t len, loff_t *off)
+{
+    int i;
+    u8 byte;
+
+    if (*off >= IOMEM_SIZE)
+    {
+        return 0;
+    }
+    if (*off + len > IOMEM_SIZE)
+    {
+        len = IOMEM_SIZE - *off;
+    }
+    for (i = 0; i < len; i++)
+    {
+        if (copy_from_user(&byte, buf + i, 1))
+        {
+            return -EFAULT;
+        }
+        iowrite8(byte, (u8 *)vram + *off + i);
+    }
+    *off += len;
+
+    return len;
+}
+
+static struct file_operations vram_fops =
+{
+    .owner = THIS_MODULE,
+    .open = iomem_open,
+    .release = iomem_close,
+    .read = iomem_read,
+    .write = iomem_write
+};
+
+static int __init iomem_init(void) 
+{
+    int ret;
+    struct device *dev_ret;
+
+    if ((vram = ioremap(IOMEM_BASE, IOMEM_SIZE)) == NULL)
+    {
+        printk(KERN_ERR "Mapping video RAM failed\n");
+        return -ENOMEM;
+    }
+    if ((ret = alloc_chrdev_region(&first, 0, 1, "vram")) < 0)
+    {
+        return ret;
+    }
+    if (IS_ERR(cl = class_create(THIS_MODULE, "chardrv")))
+    {
+        unregister_chrdev_region(first, 1);
+        return PTR_ERR(cl);
+    }
+    if (IS_ERR(dev_ret = device_create(cl, NULL, first, NULL, "vram")))
+    {
+        class_destroy(cl);
+        unregister_chrdev_region(first, 1);
+        return PTR_ERR(dev_ret);
+    }
+
+    cdev_init(&c_dev, &vram_fops);
+    if ((ret = cdev_add(&c_dev, first, 1)) < 0)
+    {
+        device_destroy(cl, first);
+        class_destroy(cl);
+        unregister_chrdev_region(first, 1);
+        return ret;
+    }
+    return 0;
+}
+
+static void __exit iomem_exit(void) 
+{
+    cdev_del(&c_dev);
+    device_destroy(cl, first);
+    class_destroy(cl);
+    unregister_chrdev_region(first, 1);
+    iounmap(vram);
+}
+
+module_init(iomem_init);
+module_exit(iomem_exit);
+
+MODULE_AUTHOR("Sonu Abraham");
+MODULE_DESCRIPTION("LDD: Memory mapped I/O");
+MODULE_LICENSE("GPL v2");

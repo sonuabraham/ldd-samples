@@ -9,6 +9,11 @@ add_executable(lab4_char_seek_test char/lab4_char_seek_test.c)
 add_executable(lab5_char_poll_test char/lab5_char_poll_test.c)
 add_executable(lab5_char_select_test char/lab5_char_select_test.c)
 add_executable(lab6_char_fasync_test char/lab6_char_fasync_test.c)
+add_executable(lab3_dma_mmap_test dma/lab3_mmap_test.c)
+add_executable(lab6_dma_aio_test dma/lab6_aio_test.c)
+
+target_link_libraries(lab6_dma_aio_test rt  )
+
 
 install(TARGETS lab1_char_init_test RUNTIME DESTINATION bin)
 install(TARGETS lab2_char_read_write_test RUNTIME DESTINATION bin)
@@ -17,5 +22,7 @@ install(TARGETS lab4_char_seek_test RUNTIME DESTINATION bin)
 install(TARGETS lab5_char_poll_test RUNTIME DESTINATION bin)
 install(TARGETS lab5_char_select_test RUNTIME DESTINATION bin)
 install(TARGETS lab6_char_fasync_test RUNTIME DESTINATION bin)
+install(TARGETS lab3_dma_mmap_test RUNTIME DESTINATION bin)
+install(TARGETS lab6_dma_aio_test RUNTIME DESTINATION bin)
 
 

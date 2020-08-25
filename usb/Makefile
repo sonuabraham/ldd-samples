@@ -1,5 +1,5 @@
 
-obj-m := lab1_usb.o lab2_usb_notifier.o lab3_notifier.o
+obj-m := lab1_usb.o lab2_usb_notifier.o lab3_notifier.o usb-skeleton.o
 
 SRC := $(shell pwd)
 
